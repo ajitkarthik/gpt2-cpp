@@ -1,0 +1,12 @@
+build/
+build-release/
+compile_commands.json
+.vscode/
+.cache/
+
+# GPT-2 weights (~475MB) -- re-download rather than commit.
+*.bin
+*.md
+
+# Don't ignore this file
+!README.md
