@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <iostream>
@@ -108,6 +109,14 @@ int main(void) {
     const auto OFFSET_FCPROJB = OFFSET_FCPROJW + (layers * embsz * 4 * embsz) * sizeof(float);
     const auto OFFSET_LNFW = OFFSET_FCPROJB + (layers * embsz) * sizeof(float);
     const auto OFFSET_LNFB = OFFSET_LNFW + (embsz) * sizeof(float);
+
+    // Some sanity asserts since weights are known in advance
+    // Check if offset math above is correct
+    assert(OFFSET_LNFB + (embsz * sizeof(float)) == mp.bytes().size());
+    // Check that token embedding weights are 0 between vocab and vocab_padded
+    assert(std::all_of(mp.bytes().begin() + OFFSET_WTE + vocab * embsz * sizeof(float),
+                       mp.bytes().begin() + OFFSET_WTE + vocab_padded * embsz * sizeof(float),
+                       [](std::byte b) { return b == std::byte{0}; }));
 
     // Instantiate the decoder
     // Decoder GPT2(maxT, vocab, layers, nh, embsz, vocab_padded, weights);
