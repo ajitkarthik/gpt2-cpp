@@ -1,3 +1,5 @@
+#pragma once
+
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -46,6 +48,8 @@ class MappedFile {
     MappedFile& operator=(const MappedFile&) = delete;
 
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return {data_, size_}; }
+
+    std::int32_t to_int32(std::span<const std::byte> bytes);
 
    private:
     const std::byte* data_ = nullptr;
