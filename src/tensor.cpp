@@ -40,6 +40,17 @@ float Tensor::val() const {
     return at(0, 0);
 }
 
+// Scale tensor in place
+Tensor Tensor::scale(float sf) const {
+    Tensor out(rows_, cols_);
+    for (int i = 0; i < rows_; i++) {
+        for (int j = 0; j < cols_; j++) {
+            out.set(i, j, at(i, j) * sf);
+        }
+    }
+    return out;
+}
+
 float Tensor::sum() const {
     float sum = 0.0f;
     for (int i = 0; i < rows_; i++) {

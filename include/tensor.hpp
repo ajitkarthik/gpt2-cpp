@@ -36,9 +36,14 @@ class Tensor {
     // Allocate a rows x cols tensor, elements zero-initialized.
     Tensor(int rows, int cols);
 
+    // In-place scale of tensor by scale factor
+    Tensor scale(float sf) const;
+
     static Tensor zeros(int rows, int cols);
 
     // misc helpers
+    // this one is used to access the underlying vector directly and potentially change it
+    std::vector<float> data() { return data_; };
     // set element [i, j]
     void set(int i, int j, float val);
     // return element [i, j]
@@ -46,7 +51,6 @@ class Tensor {
     // number of rows and cols
     int rows() const;
     int cols() const;
-    // used for the test pass
     Tensor softmax() const;
     // find index of max element in given row of tensor
     int max_idx(int row) const;
