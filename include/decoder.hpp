@@ -7,42 +7,11 @@
 
 #include "tensor.hpp"
 
+using tn::MatrixView;
 using tn::Tensor;
 using namespace std;
 
 namespace decoder {
-
-struct MatrixView {
-    const float* data;
-    int rows, cols;
-    int row_stride, col_stride;
-    MatrixView(const float* data, int rows, int cols)
-        : data(data), rows(rows), cols(cols), row_stride(cols), col_stride(1) {}
-    MatrixView(const float* data, int rows, int cols, int row_stride, int col_stride)
-        : data(data), rows(rows), cols(cols), row_stride(row_stride), col_stride(col_stride) {}
-    // self @ m
-    Tensor matmul(const MatrixView& m) const {
-        assert(cols == m.rows);
-        Tensor out(rows, m.cols);
-
-        for (int p = 0; p < rows; p++) {
-            for (int q = 0; q < m.cols; q++) {
-                float val = 0.0f;
-                for (int k = 0; k < cols; k++) {
-                    val += (at(p, k) * m.at(k, q));
-                }
-                out.set(p, q, val);
-            }
-        }
-        return out;
-    }
-    // self^T
-    MatrixView transpose() const { return MatrixView(data, cols, rows, col_stride, row_stride); }
-    float at(int i, int j) const {
-        assert(i < rows && j < cols);
-        return *(data + i * row_stride + j * col_stride);
-    }
-};
 
 // See https://docs.pytorch.org/docs/2.14/generated/torch.nn.GELU.html
 inline Tensor gelu_(Tensor& x) {
@@ -124,57 +93,52 @@ class LayerNorm {
 
 // Multi-head self-attention
 // input: Shape (T, C)
+// output: Shape (T, C)
+// T = tokens, C = embedding dimensions
 class MHSA {
    public:
     MHSA(span<const float> qkvw, span<const float> attprojw, span<const float> qkvb,
-         span<const float> attprojb, int embsz, int nheads)
-        : qkvw_(qkvw),
-          qkvb_(qkvb),
-          attprojw_(attprojw),
-          attprojb_(attprojb),
-          embsz_(embsz),
-          nheads_(nheads) {}
+         span<const float> attprojb, int nheads)
+        : qkvw_(qkvw), qkvb_(qkvb), attprojw_(attprojw), attprojb_(attprojb), nheads_(nheads) {}
     Tensor forward(const Tensor& x) const {
-        Tensor out(x.rows(), embsz_);    // Shape (T, C)
-        Tensor out_t(embsz_, x.rows());  // Shape (C, T)
+        int C = x.cols();  // For gpt-2 this is 768
+        int T = x.rows();
+        Tensor out(T, C);    // Shape (T, C)
+        Tensor out_t(C, T);  // Shape (C, T)
+
         // first step is the linear: h = x @ qkvw^T + qkvb
-        // qkvw is of shape (3C, C). Let's first slice it into qw, kw, vw each of (C, C)
-        // This is better than post-slicing after the linear, so that we do don't have to hold
-        // 1 contiguous (T, 3C) tensor in memory. Instead we have 3 different (T, C) tensors
-        MatrixView qw(&qkvw_[0], embsz_, embsz_, embsz_,
-                      1);  // data, rows, cols, row stride, col stride
-        MatrixView kw(&qkvw_[embsz_ * embsz_ * sizeof(float)], embsz_, embsz_, embsz_,
-                      1);  // data, rows, cols, row stride, col stride
-        MatrixView vw(&qkvw_[2 * embsz_ * embsz_ * sizeof(float)], embsz_, embsz_, embsz_,
-                      1);  // data, rows, cols, row stride, col stride
+        // qkvw is of shape (3C, C).
+        // shape: q (T, 3C) <- x (T, C) @ qkvw (3C, C)^T + qkvb (3C)
+        MatrixView qkvw(&qkvw_[0], 3 * C, C);
 
         // Now apply the linear
-        // q = x @ qw^T + b
-        // shape: q (T, C) <- x (T, C) @ qw (C, C)^T + b (C)
-        Linear l1q(qw, qkvb_.subspan(0, embsz_));
-        Linear l1k(kw, qkvb_.subspan(embsz_, embsz_));
-        Linear l1v(vw, qkvb_.subspan(2 * embsz_, embsz_));
-        Tensor q = l1q.forward(x);  // Shape (T, C)
-        Tensor k = l1k.forward(x);  // Shape (T, C)
-        Tensor v = l1v.forward(x);  // Shape (T, C)
+        Linear lqkv(qkvw, qkvb_);
+        Tensor qkv = lqkv.forward(x);  // Shape (T, 3C)
+        assert(qkv.rows() == T && qkv.cols() == 3 * C);
 
-        // Next step is to split into n heads to get (T, nheads, C/nheads)
-        // Since we only have a 2-D tensor library, run a for loop nheads times
-        // Each matrix is therefore (T, C/nheads) in dim
-        // Do the transpose at the same time so that we get (C/nheads, T) shaped MatrixView
-        assert(embsz_ % nheads_ == 0);
+        // next step is to separate the qkv tensor shape = (T, 3C)
+        // into 3 tensors q, k, v each shape = (T, C)
+        // Also, we need to split each q, k, v further into shape (T, C/nheads) for each of the
+        // attention heads. Since we only have a 2-D tensor library, run a for loop nheads times
+        // with each q, k, v matrix of shape = (T, C/nheads)
+        // we'll do this with a 0-copy MatrixView that offsets cleverly into the qkv tensor
+        assert(C % nheads_ == 0);
         for (int i = 0; i < nheads_; i++) {
-            // Shape (T, C/nheads)
-            MatrixView qh(q.data().data(), x.rows(), embsz_ / nheads_, embsz_, 1);
-            MatrixView kh(k.data().data(), x.rows(), embsz_ / nheads_, embsz_, 1);
+            // Per head q, k, and v. Shape (T, C/nheads)
+            MatrixView qh(qkv.data().data() + (i * C) / nheads_, T, C / nheads_, 3 * C, 1);
+            MatrixView kh(qkv.data().data() + C + (i * C) / nheads_, T, C / nheads_, 3 * C, 1);
+            MatrixView vh(qkv.data().data() + (2 * C) + (i * C) / nheads_, T, C / nheads_, 3 * C,
+                          1);
             // Shape (C/nheads, T)
             MatrixView kht = kh.transpose();
-            // scaled dot product
-            Tensor sdp = qh.matmul(kht).scale(1.0 / sqrt(embsz_ / nheads_));  // Shape (T, T)
+            // scaled dot product (T, C/nheads) @ (C/nheads, T) -> (T, T)
+            Tensor sdp = matmul(qh, kht).scale(1.0 / sqrt(C / nheads_));  // Shape (T, T)
+            assert(sdp.rows() == T && sdp.cols() == T);
             // Softmax
             Tensor softmax = sdp.softmax();  // Shape (T, T)
             // Extract the value vector
-            Tensor val = softmax.matmul(v);  // Shape (T, T) @ (T, C/nheads) -> (T, C/nheads)
+            Tensor val = softmax.matmul(vh);  // Shape (T, T) @ (T, C/nheads) -> (T, C/nheads)
+            assert(val.rows() == T && val.cols() == C / nheads_);
             // Stack the matrix from each head to get (T, C)
             // To do this, we transpose val to get (C/nheads, T)
             // then stack to get (C, T)
@@ -187,18 +151,20 @@ class MHSA {
         // At the end of the loop we have a tensor that's (C, T)
         // Transpose it to get (T, C)
         out = out_t.transpose();
+        assert(out.rows() == T && out.cols() == C);
         // Apply the linear projection
         // shapes: out(T, C) @ attproj(C, C) -> (T, C)
-        Linear lproj(MatrixView(&attprojw_[0], embsz_, embsz_), attprojb_);
-        return lproj.forward(out);
+        Linear lproj(MatrixView(&attprojw_[0], C, C), attprojb_);
+        Tensor attnproj = lproj.forward(out);
+        assert(attnproj.rows() == T && attnproj.cols() == C);
+        return attnproj;
     }
 
    private:
-    span<const float> qkvw_;      // shape (3C, C) C=embsz
+    span<const float> qkvw_;      // shape (3C, C) C is the embedding dimension
     span<const float> qkvb_;      // shape (3C)
     span<const float> attprojw_;  // shape (C, C)
     span<const float> attprojb_;  // shape (C)
-    int embsz_;                   // embedding dimensions
     int nheads_;                  // number of attention heads
 };
 

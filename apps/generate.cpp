@@ -3,11 +3,12 @@
 #include <cstdint>
 #include <iostream>
 
-#include "decoder.hpp"
 #include "loader.hpp"
+#include "tensor.hpp"
 
 using namespace std;
-using namespace decoder;
+using tn::MatrixView;
+using tn::Tensor;
 
 // Looks up tokens in an embedding matrix -> (T, C)
 // Adds positional embeddings -> (T, C)

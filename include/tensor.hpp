@@ -1,10 +1,28 @@
 // tensor.hpp — only forward mode tensor library
 #pragma once
 
+#include <cassert>
 #include <ostream>
 #include <vector>
 
 namespace tn {
+
+struct MatrixView {
+    const float* data;
+    int rows, cols;
+    int row_stride, col_stride;
+    MatrixView(const float* data, int rows, int cols)
+        : data(data), rows(rows), cols(cols), row_stride(cols), col_stride(1) {}
+    MatrixView(const float* data, int rows, int cols, int row_stride, int col_stride)
+        : data(data), rows(rows), cols(cols), row_stride(row_stride), col_stride(col_stride) {}
+    // self^T
+    MatrixView transpose() const { return MatrixView(data, cols, rows, col_stride, row_stride); }
+    float at(int i, int j) const {
+        assert(i < rows && j < cols);
+        return *(data + i * row_stride + j * col_stride);
+    }
+};
+
 class Tensor {
    private:
     std::vector<float> data_;
@@ -42,6 +60,8 @@ class Tensor {
     static Tensor zeros(int rows, int cols);
 
     // misc helpers
+    // convert a tensor to a MatrixView
+    MatrixView toMatrixView() const;
     // this one is used to access the underlying vector directly and potentially change it
     std::vector<float> data() { return data_; };
     // set element [i, j]
@@ -62,10 +82,14 @@ class Tensor {
     // Tensor ops
     Tensor transpose() const;
     Tensor matmul(const Tensor&) const;
+    Tensor matmul(const MatrixView& m) const;
     Tensor clone() const;
     float sum() const;                          // returns the sum of all elements of a tensor
     Tensor add_bias(const Tensor& bias) const;  // this: (rows, cols), bias: (1, cols)
 };
 
+Tensor matmul(const MatrixView& a, const MatrixView& b);
+
 std::ostream& operator<<(std::ostream& os, const Tensor& t);
+
 }  // namespace tn

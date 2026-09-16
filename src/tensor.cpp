@@ -15,6 +15,10 @@ Tensor::Tensor(int rows, int cols) : rows_(rows), cols_(cols), row_stride_(cols)
     data_ = std::vector<float>(rows * cols, 0.0f);
 }
 
+MatrixView Tensor::toMatrixView() const {
+    return MatrixView(data_.data(), rows_, cols_, row_stride_, col_stride_);
+}
+
 void Tensor::set(int i, int j, float val) {
     assert(i >= 0 && i < rows_);
     assert(j >= 0 && j < cols_);
@@ -111,20 +115,12 @@ Tensor Tensor::softmax() const {
     return output;
 }
 
-Tensor Tensor::matmul(const Tensor& t) const { /* C = A @ B */
-    assert(cols_ == t.rows_);
-    Tensor output(rows_, t.cols_);
+// Tensor @ MatrixView -> Tensor
+Tensor Tensor::matmul(const MatrixView& m) const { return tn::matmul(toMatrixView(), m); }
 
-    for (int p = 0; p < rows_; p++) {
-        for (int q = 0; q < t.cols_; q++) {
-            float val = 0.0f;
-            for (int k = 0; k < cols_; k++) {
-                val += (at(p, k) * t.at(k, q));
-            }
-            output.set(p, q, val);
-        }
-    }
-    return output;
+// Tensor @ Tensor -> Tensor
+Tensor Tensor::matmul(const Tensor& t) const {
+    return tn::matmul(toMatrixView(), t.toMatrixView());
 }
 
 Tensor Tensor::clone() const { return Tensor(rows_, cols_, row_stride_, col_stride_, data_); }
@@ -163,6 +159,20 @@ std::ostream& operator<<(std::ostream& os, const Tensor& t) {
         os << std::endl;
     }
     return os;
+}
+
+// MatrixView @ MatrixView -> Tensor
+Tensor matmul(const MatrixView& a, const MatrixView& b) {
+    assert(a.cols == b.rows);
+    Tensor out(a.rows, b.cols);
+    for (int i = 0; i < a.rows; i++) {
+        for (int j = 0; j < b.cols; j++) {
+            float v = 0.0f;
+            for (int k = 0; k < a.cols; k++) v += a.at(i, k) * b.at(k, j);
+            out.set(i, j, v);
+        }
+    }
+    return out;
 }
 
 }  // namespace tn
