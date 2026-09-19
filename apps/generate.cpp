@@ -15,7 +15,7 @@ using tn::Tensor;
 // Returns a tensor of shape (T, C)
 Tensor embed(span<const int32_t> tokens, MatrixView& wte, MatrixView& wpe) {
     int T = static_cast<int>(tokens.size());
-    assert(T >= 0 && T < wpe.rows);
+    assert(T >= 0 && T <= wpe.rows);
     Tensor x(T, wte.cols);
     for (int i = 0; i < T; i++) {
         assert(tokens[i] >= 0 && tokens[i] < wte.rows);

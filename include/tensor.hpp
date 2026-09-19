@@ -18,7 +18,7 @@ struct MatrixView {
     // self^T
     MatrixView transpose() const { return MatrixView(data, cols, rows, col_stride, row_stride); }
     float at(int i, int j) const {
-        assert(i < rows && j < cols);
+        assert(i >= 0 && j >= 0 && i < rows && j < cols);
         return *(data + i * row_stride + j * col_stride);
     }
 };
@@ -54,7 +54,7 @@ class Tensor {
     // Allocate a rows x cols tensor, elements zero-initialized.
     Tensor(int rows, int cols);
 
-    // In-place scale of tensor by scale factor
+    // Scale tensor and return the scaled tensor
     Tensor scale(float sf) const;
 
     static Tensor zeros(int rows, int cols);
@@ -62,8 +62,8 @@ class Tensor {
     // misc helpers
     // convert a tensor to a MatrixView
     MatrixView toMatrixView() const;
-    // this one is used to access the underlying vector directly and potentially change it
-    std::vector<float> data() { return data_; };
+    // Access to underlying raw storage
+    float* raw() { return data_.data(); }
     // set element [i, j]
     void set(int i, int j, float val);
     // return element [i, j]

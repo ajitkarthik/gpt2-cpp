@@ -44,7 +44,7 @@ float Tensor::val() const {
     return at(0, 0);
 }
 
-// Scale tensor in place
+// Scale tensor and return the scaled tensor
 Tensor Tensor::scale(float sf) const {
     Tensor out(rows_, cols_);
     for (int i = 0; i < rows_; i++) {
