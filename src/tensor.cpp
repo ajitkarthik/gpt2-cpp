@@ -65,7 +65,7 @@ float Tensor::sum() const {
     return sum;
 }
 
-int Tensor::max_idx(int row) const {
+int Tensor::argmax(int row) const {
     assert(row >= 0 && row < rows_);
     float max = -FLT_MAX;
     int max_idx = 0;
@@ -170,6 +170,17 @@ Tensor matmul(const MatrixView& a, const MatrixView& b) {
             float v = 0.0f;
             for (int k = 0; k < a.cols; k++) v += a.at(i, k) * b.at(k, j);
             out.set(i, j, v);
+        }
+    }
+    return out;
+}
+
+Tensor operator+(Tensor& a, Tensor& b) {
+    assert(a.cols() == b.cols() && a.rows() == b.rows());
+    Tensor out(a.rows(), a.cols());
+    for (int i = 0; i < a.rows(); i++) {
+        for (int j = 0; j < a.cols(); j++) {
+            out.set(i, j, a.at(i, j) + b.at(i, j));
         }
     }
     return out;

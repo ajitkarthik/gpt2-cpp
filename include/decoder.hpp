@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <optional>
 #include <span>
@@ -34,13 +35,14 @@ inline void gelu_(Tensor& x) {
 // y (batch dim, output feature)
 class Linear {
    public:
-    Linear(tn::MatrixView w, std::optional<std::span<const float>> b) : w_(w), b_(b) {
-        if (b_.has_value()) {
-            assert(static_cast<int>((*b_).size()) == w.rows);
-        }
-    }
+    Linear(MatrixView w, std::optional<std::span<const float>> b) : w_(w), b_(b) {}
+    Linear() = default;
 
     Tensor forward(const Tensor& x) const {
+        if (b_.has_value()) {
+            assert(static_cast<int>((*b_).size()) == w_.rows);
+        }
+
         assert(x.cols() == w_.cols);
         Tensor y(x.rows(), w_.rows);
         for (int i = 0; i < x.rows(); i++) {
@@ -67,6 +69,7 @@ class Linear {
 // See: https://docs.pytorch.org/docs/2.14/generated/torch.nn.LayerNorm.html
 class LayerNorm {
    public:
+    LayerNorm() = default;
     LayerNorm(std::span<const float> w, std::span<const float> b, float eps)
         : w_(w), b_(b), eps_(eps) {}
     Tensor forward(const Tensor& x) const {
@@ -103,9 +106,10 @@ class LayerNorm {
 // T = tokens, C = embedding dimensions
 class MHSA {
    public:
-    MHSA(std::span<const float> qkvw, std::span<const float> attprojw, std::span<const float> qkvb,
+    MHSA(std::span<const float> qkvw, std::span<const float> qkvb, std::span<const float> attprojw,
          std::span<const float> attprojb, int nheads)
         : qkvw_(qkvw), qkvb_(qkvb), attprojw_(attprojw), attprojb_(attprojb), nheads_(nheads) {}
+    MHSA() = default;
     Tensor forward(const Tensor& x) const {
         int C = x.cols();  // For gpt-2 this is 768
         int T = x.rows();
@@ -183,46 +187,119 @@ class MHSA {
 class FFN {
    public:
     FFN(MatrixView w1, std::span<const float> b1, MatrixView wproj, std::span<const float> bproj)
-        : w1_(w1), b1_(b1), wproj_(wproj), bproj_(bproj) {}
+        : l1_(w1, b1), l2_(wproj, bproj) {}
+    FFN() = default;
     Tensor forward(const Tensor& x) const {
-        Linear l1(w1_, b1_);
-        Linear l2(wproj_, bproj_);
-        Tensor h = l1.forward(x);
+        Tensor h = l1_.forward(x);
         gelu_(h);
-        return l2.forward(h);
+        return l2_.forward(h);
     }
 
    private:
-    MatrixView w1_;
-    std::span<const float> b1_;
-    MatrixView wproj_;
-    std::span<const float> bproj_;
+    Linear l1_;
+    Linear l2_;
 };
 
 class Layer {
    public:
+    Layer() = default;
+    Layer(std::span<const float> ln1w, std::span<const float> ln1b, std::span<const float> qkvw,
+          std::span<const float> qkvb, std::span<const float> attprojw,
+          std::span<const float> attprojb, std::span<const float> ln2w, std::span<const float> ln2b,
+          std::span<const float> fcw, std::span<const float> fcb, std::span<const float> fcprojw,
+          std::span<const float> fcprojb, float eps, int nheads, int embsz)
+        : ln1_(LayerNorm(ln1w, ln1b, eps)),
+          attn_(MHSA(qkvw, qkvb, attprojw, attprojb, nheads)),
+          ln2_(LayerNorm(ln2w, ln2b, eps)),
+          ffn_(FFN(MatrixView(fcw.data(), 4 * embsz, embsz), fcb,
+                   MatrixView(fcprojw.data(), embsz, 4 * embsz), fcprojb)) {}
+    Tensor forward(const Tensor& x) {  // shape (T, C)
+        Tensor out(x.rows(), x.cols());
+        out = ln1_.forward(x);
+        out = attn_.forward(out);
+        out = out + x;  // add the residual stream
+        out = ln2_.forward(out);
+        out = ffn_.forward(out);
+        out = out + x;  // add the residual stream
+        assert(out.rows() == x.rows() && out.cols() == x.cols());
+        return out;
+    }
+
    private:
+    LayerNorm ln1_;
+    MHSA attn_;
+    LayerNorm ln2_;
+    FFN ffn_;
 };
 
 class Decoder {
    public:
-    int contextSize;
-    int vocab;
-    int layers;
-    int numheads;
-    int embedsize;
-    int vocab_padded;
-
-    // Read the
-
     // Create the transformer
-    Decoder(int contextSize, int vocab, int layers, int numheads, int embedsize, int vocab_padded)
-        : contextSize(contextSize),
-          vocab(vocab),
-          layers(layers),
-          numheads(numheads),
-          embedsize(embedsize),
-          vocab_padded(vocab_padded) {}
+    Decoder(int contextSize, int vocab, int nlayers, int numheads, int embedsize, int vocab_padded)
+        : contextSize_(contextSize),
+          vocab_(vocab),
+          nlayers_(nlayers),
+          numheads_(numheads),
+          embedsize_(embedsize),
+          vocab_padded_(vocab_padded) {
+        // Instantiate all the layers
+        layers_.reserve(nlayers);
+        eps_ = 1.0e-5;
+    }
+    // Loads weights for a layer
+    void loadLayerWeights(int i, std::span<const float> ln1w, std::span<const float> ln1b,
+                          std::span<const float> qkvw, std::span<const float> qkvb,
+                          std::span<const float> attprojw, std::span<const float> attprojb,
+                          std::span<const float> ln2w, std::span<const float> ln2b,
+                          std::span<const float> fcw, std::span<const float> fcb,
+                          std::span<const float> fcprojw, std::span<const float> fcprojb) {
+        layers_[i] = Layer(ln1w, ln1b, qkvw, qkvb, attprojw, attprojb, ln2w, ln2b, fcw, fcb,
+                           fcprojw, fcprojb, eps_, numheads_, embedsize_);
+    }
+
+    void loadLNWeights(std::span<const float> lnfw, std::span<const float> lnfb) {
+        finalLN_ = LayerNorm(lnfw, lnfb, eps_);
+    }
+
+    void loadVocabProjWeights(std::span<const float> wte) {
+        vocabproj_ = Linear(MatrixView(wte.data(), vocab_padded_, embedsize_), std::nullopt);
+    }
+
+    // The decoder expects x to be already embedded and positionally encoded
+    // The input into the decoder is of shape (T, C), and output are logits of shape (1, V)
+    // the predicted token
+    Tensor forward(Tensor& x) {
+        assert(x.cols() == embedsize_);  // shape of x (T, C)
+        for (int i = 0; i < nlayers_; i++) {
+            x = layers_[i].forward(x);
+        }
+        // Just grab the last position so we'll end up with (1, C)
+        Tensor logits = Tensor(1, embedsize_);
+        for (int i = 0; i < embedsize_; i++) {
+            logits.set(0, i, x.at(x.rows() - 1, i));
+        }
+
+        logits = finalLN_.forward(logits);    // Final layerNorm, shape (1, C)
+        logits = vocabproj_.forward(logits);  // Vocabulary projection, shape (1, Vp)
+        // Remove the padded entries
+        Tensor final_logits(1, vocab_);
+        for (int i = 0; i < vocab_; i++) {
+            final_logits.set(0, i, logits.at(0, i));
+        }
+        assert(final_logits.rows() == 1 && final_logits.cols() == vocab_);
+        return final_logits;
+    }
+
+   private:
+    int vocab_;  // vocabulary size
+    int nlayers_;
+    int numheads_;
+    int embedsize_;
+    int vocab_padded_;
+    std::vector<Layer> layers_;
+    LayerNorm finalLN_;  // Final layer norm, outside all the 12 layers
+    Linear vocabproj_;   // Vocabulary projection
+    float eps_;
 };
 
 }  // namespace decoder

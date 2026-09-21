@@ -5,7 +5,7 @@ compile_commands.json
 .cache/
 
 # GPT-2 weights (~475MB) -- re-download rather than commit.
-*.bin
+gpt2_124M.bin
 *.md
 
 # Don't ignore this file

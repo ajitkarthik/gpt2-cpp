@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <iostream>
 
-#include "loader.hpp"
+#include "decoder.hpp"
+#include "mappedfile.hpp"
 #include "tensor.hpp"
 
 using namespace std;
@@ -111,6 +112,21 @@ int main(void) {
     const auto OFFSET_LNFW = OFFSET_FCPROJB + (layers * embsz) * sizeof(float);
     const auto OFFSET_LNFB = OFFSET_LNFW + (embsz) * sizeof(float);
 
+    const auto SIZE_LN1W = OFFSET_LN1B - OFFSET_LN1W;
+    const auto SIZE_LN1B = OFFSET_QKVW - OFFSET_LN1B;
+    const auto SIZE_QKVW = OFFSET_QKVB - OFFSET_QKVW;
+    const auto SIZE_QKVB = OFFSET_ATTPROJW - OFFSET_QKVB;
+    const auto SIZE_ATTPROJW = OFFSET_ATTPROJB - OFFSET_ATTPROJW;
+    const auto SIZE_ATTPROJB = OFFSET_LN2W - OFFSET_ATTPROJB;
+    const auto SIZE_LN2W = OFFSET_LN2B - OFFSET_LN2W;
+    const auto SIZE_LN2B = OFFSET_FCW - OFFSET_LN2B;
+    const auto SIZE_FCW = OFFSET_FCB - OFFSET_FCW;
+    const auto SIZE_FCB = OFFSET_FCPROJW - OFFSET_FCB;
+    const auto SIZE_FCPROJW = OFFSET_FCPROJB - OFFSET_FCPROJW;
+    const auto SIZE_FCPROJB = OFFSET_LNFW - OFFSET_FCPROJB;
+    const auto SIZE_LNFW = OFFSET_LNFB - OFFSET_LNFW;
+    const auto SIZE_LNFB = embsz * sizeof(float);
+
     // Some sanity asserts since weights are known in advance
     // Check if offset math above is correct
     assert(OFFSET_LNFB + (embsz * sizeof(float)) == mp.bytes().size());
@@ -120,7 +136,27 @@ int main(void) {
                        [](std::byte b) { return b == std::byte{0}; }));
 
     // Instantiate the decoder
-    // Decoder GPT2(maxT, vocab, layers, nh, embsz, vocab_padded, weights);
+    decoder::Decoder GPT2(maxT, vocab, layers, nh, embsz, vocab_padded);
+
+    // Load weights into decoder
+    for (int i = 0; i < layers; i++) {
+        GPT2.loadLayerWeights(
+            i, mp.floats_at(OFFSET_LN1W + (SIZE_LN1W / layers) * i, embsz),
+            mp.floats_at(OFFSET_LN1B + (SIZE_LN1B / layers) * i, embsz),
+            mp.floats_at(OFFSET_QKVW + (SIZE_QKVW / layers) * i, 3 * embsz * embsz),
+            mp.floats_at(OFFSET_QKVB + (SIZE_QKVB / layers) * i, 3 * embsz),
+            mp.floats_at(OFFSET_ATTPROJW + (SIZE_ATTPROJW / layers) * i, embsz * embsz),
+            mp.floats_at(OFFSET_ATTPROJB + (SIZE_ATTPROJB / layers) * i, embsz),
+            mp.floats_at(OFFSET_LN2W + (SIZE_LN2W / layers) * i, embsz),
+            mp.floats_at(OFFSET_LN2B + (SIZE_LN2B / layers) * i, embsz),
+            mp.floats_at(OFFSET_FCW + (SIZE_FCW / layers) * i, 4 * embsz * embsz),
+            mp.floats_at(OFFSET_FCB + (SIZE_FCB / layers) * i, 4 * embsz),
+            mp.floats_at(OFFSET_FCPROJW + (SIZE_FCPROJW / layers) * i, embsz * 4 * embsz),
+            mp.floats_at(OFFSET_FCPROJB + (SIZE_FCPROJB / layers) * i, embsz));
+    }
+
+    GPT2.loadLNWeights(mp.floats_at(OFFSET_LNFW + (SIZE_LNFW / layers), embsz),
+                       mp.floats_at(OFFSET_LNFB + (SIZE_LNFB / layers), embsz));
 
     // wte (vocab_padded, embsz)
     MatrixView wte =
@@ -131,9 +167,10 @@ int main(void) {
     MatrixView wpe = MatrixView(
         reinterpret_cast<const float*>(mp.bytes().subspan(OFFSET_WPE).data()), maxT, embsz);
 
-    // TODO: Needs to be hooked up to the tokenizer
-    span<const int32_t> tokens;
-
+    // Autoregressive loop
+    // while (token!= end token) {
     // Lookup the tokens in wte to get a vector (T, embsz)
-    Tensor x = embed(tokens, wte, wpe);
+    // TODO: Needs to be hooked up to the tokenizer
+    // span<const int32_t> tokens;
+    // Tensor x = embed(tokens, wte, wpe);
 }

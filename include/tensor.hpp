@@ -11,6 +11,7 @@ struct MatrixView {
     const float* data;
     int rows, cols;
     int row_stride, col_stride;
+    MatrixView() = default;
     MatrixView(const float* data, int rows, int cols)
         : data(data), rows(rows), cols(cols), row_stride(cols), col_stride(1) {}
     MatrixView(const float* data, int rows, int cols, int row_stride, int col_stride)
@@ -64,6 +65,8 @@ class Tensor {
     MatrixView toMatrixView() const;
     // Access to underlying raw storage
     float* raw() { return data_.data(); }
+    // Access to the data vector
+    std::vector<float> data() { return data_; }
     // set element [i, j]
     void set(int i, int j, float val);
     // return element [i, j]
@@ -73,7 +76,7 @@ class Tensor {
     int cols() const;
     Tensor softmax() const;
     // find index of max element in given row of tensor
-    int max_idx(int row) const;
+    int argmax(int row) const;
     // returns the value of a tensor. Makes sense only for a tensor with 1 value
     float val() const;
     // flatten a Tensor to a vector<float>
@@ -89,6 +92,7 @@ class Tensor {
 };
 
 Tensor matmul(const MatrixView& a, const MatrixView& b);
+Tensor operator+(const Tensor& a, const Tensor& b);
 
 std::ostream& operator<<(std::ostream& os, const Tensor& t);
 
