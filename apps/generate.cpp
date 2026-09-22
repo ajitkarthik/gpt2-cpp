@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <string>
 
 #include "decoder.hpp"
 #include "mappedfile.hpp"
@@ -27,6 +28,17 @@ Tensor embed(span<const int32_t> tokens, MatrixView& wte, MatrixView& wpe) {
     return x;
 }
 
+string idToToken(int id, MappedFile& tk, size_t startofTokens) {
+    size_t offset = startofTokens;
+    for (int i = 0; i < id; i++) {
+        // Read length byte
+        uint8_t len = static_cast<uint8_t>(tk.bytes()[offset++]);
+        offset += len;
+    }
+    return string(reinterpret_cast<const char*>(offset + 1),
+                  static_cast<uint8_t>(tk.bytes()[offset]));
+}
+
 int main(void) {
     /* Each field below is 4 bytes
     |   idx |    value | meaning                    |
@@ -42,6 +54,7 @@ int main(void) {
     | 8–255 |        0 | padding                    |
     */
     constexpr auto CHECKPOINTFILE = "gpt2_124M.bin";
+    constexpr auto TOKENIZERFILE = "gpt2_tokenizer.bin";
     constexpr auto OFFSET_MAGIC = 0;                      // Magic number
     constexpr auto OFFSET_VERSION = 1 * sizeof(int32_t);  // Version
     constexpr auto OFFSET_MAXT = 2 * sizeof(int32_t);     // Max context length
@@ -136,7 +149,7 @@ int main(void) {
                        [](std::byte b) { return b == std::byte{0}; }));
 
     // Instantiate the decoder
-    decoder::Decoder GPT2(maxT, vocab, layers, nh, embsz, vocab_padded);
+    decoder::Decoder GPT2(vocab, layers, nh, embsz, vocab_padded);
 
     // Load weights into decoder
     for (int i = 0; i < layers; i++) {
@@ -158,6 +171,30 @@ int main(void) {
     GPT2.loadLNWeights(mp.floats_at(OFFSET_LNFW + (SIZE_LNFW / layers), embsz),
                        mp.floats_at(OFFSET_LNFB + (SIZE_LNFB / layers), embsz));
 
+    // Map the file containing the id -> token mappings
+    // Format:
+    // 256 x int32 little-endian header:
+    //     [0] magic 20240328
+    //     [1] version 2 (v2 adds the EOT token id at [3])
+    //     [2] vocab size n
+    //     [3] EOT token id
+    // then, for each token id 0..n-1:
+    //     1 byte length, followed by that many raw bytes
+    constexpr auto TK_OFFSET_MAGIC = 0;                       // Magic number
+    constexpr auto TK_OFFSET_VERSION = 1 * sizeof(int32_t);   // Version
+    constexpr auto TK_OFFSET_VOCAB = 2 * sizeof(int32_t);     // Vocab size
+    constexpr auto TK_OFFSET_EOT = 3 * sizeof(int32_t);       // End of token ID
+    constexpr auto TK_OFFSET_TOKENS = 256 * sizeof(int32_t);  // End of token ID
+
+    constexpr auto TK_MAGIC = 20240328;
+    constexpr auto TK_VERSION = 2;
+
+    MappedFile tk = MappedFile(TOKENIZERFILE);
+    assert(tk.to_int32(tk.bytes().subspan(TK_OFFSET_MAGIC, sizeof(int32_t))) == TK_MAGIC);
+    assert(tk.to_int32(tk.bytes().subspan(TK_OFFSET_VERSION, sizeof(int32_t))) == TK_VERSION);
+    int32_t tk_vocab = tk.to_int32(tk.bytes().subspan(TK_OFFSET_VOCAB, sizeof(int32_t)));
+    int32_t eot = tk.to_int32(tk.bytes().subspan(TK_OFFSET_EOT, sizeof(int32_t)));
+
     // wte (vocab_padded, embsz)
     MatrixView wte =
         MatrixView(reinterpret_cast<const float*>(mp.bytes().subspan(OFFSET_PAYLOAD).data()),
@@ -167,10 +204,26 @@ int main(void) {
     MatrixView wpe = MatrixView(
         reinterpret_cast<const float*>(mp.bytes().subspan(OFFSET_WPE).data()), maxT, embsz);
 
+    vector<int32_t> tokens = {20};
+    vector<int32_t> output;
+
     // Autoregressive loop
-    // while (token!= end token) {
-    // Lookup the tokens in wte to get a vector (T, embsz)
-    // TODO: Needs to be hooked up to the tokenizer
-    // span<const int32_t> tokens;
-    // Tensor x = embed(tokens, wte, wpe);
+    int32_t pred = tokens[0];
+    while (true) {
+        Tensor x = embed(tokens, wte, wpe);  // shape (T, C)
+        Tensor logits = GPT2.forward(x);     // shape (1, V)
+        pred = logits.argmax(0);
+        if (pred != eot) {
+            assert(pred < tk_vocab);
+            output.push_back(pred);
+        } else {
+            break;
+        }
+    }
+
+    // Decode the output tokens
+    for (int32_t id : output) {
+        // Find offset into mapped file
+        cout << idToToken(id, tk, TK_OFFSET_TOKENS);
+    }
 }

@@ -175,7 +175,7 @@ Tensor matmul(const MatrixView& a, const MatrixView& b) {
     return out;
 }
 
-Tensor operator+(Tensor& a, Tensor& b) {
+Tensor operator+(const Tensor& a, const Tensor& b) {
     assert(a.cols() == b.cols() && a.rows() == b.rows());
     Tensor out(a.rows(), a.cols());
     for (int i = 0; i < a.rows(); i++) {

@@ -48,17 +48,10 @@ class MappedFile {
     MappedFile(const MappedFile&) = delete;
     MappedFile& operator=(const MappedFile&) = delete;
 
-    [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return {data_, size_}; }
+    [[nodiscard]] std::span<const std::byte> bytes() const noexcept;
 
     [[nodiscard]] std::span<const float> floats_at(std::size_t byte_offset,
-                                                   std::size_t count) const {
-        const std::size_t bytes = count * sizeof(float);
-        assert(byte_offset <= size_);
-        assert(bytes <= (size_ - byte_offset));     // no overflow
-        assert(byte_offset % alignof(float) == 0);  // safe to cast
-        const std::byte* p = data_ + byte_offset;
-        return {reinterpret_cast<const float*>(p), count};
-    }
+                                                   std::size_t count) const;
 
     std::int32_t to_int32(std::span<const std::byte> bytes);
 
