@@ -7,7 +7,9 @@
 #include <cstring>
 #include <optional>
 #include <span>
+#include <vector>
 
+#include "checkpoint.hpp"
 #include "tensor.hpp"
 
 using tn::MatrixView;
@@ -104,17 +106,24 @@ class Layer {
 
 class Decoder {
    public:
-    // Create the transformer
-    Decoder(int vocab, int nlayers, int numheads, int embedsize, int vocab_padded)
-        : vocab_(vocab),
-          nlayers_(nlayers),
-          numheads_(numheads),
-          embedsize_(embedsize),
-          vocab_padded_(vocab_padded) {
-        // Instantiate all the layers
-        layers_.reserve(nlayers);
-        eps_ = 1.0e-5;
-    }
+    Decoder(Checkpoint& ckpt);
+    Tensor forward(std::span<const int32_t> tokens);
+    Tensor embed(std::span<const int32_t> tokens);
+
+   private:
+    int vocab_;                  // vocabulary size
+    int nlayers_;                // # of layers
+    int numheads_;               // # of heads
+    int embedsize_;              // # embedding size
+    int vocab_padded_;           // padded vocabulary size
+    std::vector<Layer> layers_;  // each of the layers
+    LayerNorm finalLN_;          // final layer norm, outside all the 12 layers
+    Linear vocabproj_;           // final vocabulary projection linear
+    float eps_;                  // to prevent division by 0 in layernorm
+    int maxT_;                   // max context size
+    MatrixView wte_;             // token embeding matrix
+    MatrixView wpe_;             // positional encoding matrix
+    void loadFromCheckpoint(Checkpoint checkpoint);
     void loadLayerWeights(int i, std::span<const float> ln1w, std::span<const float> ln1b,
                           std::span<const float> qkvw, std::span<const float> qkvb,
                           std::span<const float> attprojw, std::span<const float> attprojb,
@@ -123,18 +132,6 @@ class Decoder {
                           std::span<const float> fcprojw, std::span<const float> fcprojb);
     void loadLNWeights(std::span<const float> lnfw, std::span<const float> lnfb);
     void loadVocabProjWeights(std::span<const float> wte);
-    Tensor forward(Tensor& x);
-
-   private:
-    int vocab_;  // vocabulary size
-    int nlayers_;
-    int numheads_;
-    int embedsize_;
-    int vocab_padded_;
-    std::vector<Layer> layers_;
-    LayerNorm finalLN_;  // Final layer norm, outside all the 12 layers
-    Linear vocabproj_;   // Vocabulary projection
-    float eps_;
 };
 
 }  // namespace decoder

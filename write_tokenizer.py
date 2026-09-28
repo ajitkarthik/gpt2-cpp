@@ -16,7 +16,6 @@ Usage:  python3 write_tokenizer.py [output_path]
 """
 import struct
 import sys
-
 import tiktoken
 
 

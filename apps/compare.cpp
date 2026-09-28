@@ -1,0 +1,133 @@
+// This file is responsible for checking if the logits from each layer produced from generate.cpp
+// are correct. To do this, I first downloaded the reference gpt2 implementation from Karpathy's
+// llm.c repo. Then generate gpt2_124M_debug_state.bin by running train_gpt2.py with --write_tensors
+// 1 option. gpt2_124M_debug_state.bin is nothing but the logits dumped for one forward pass of the
+// model. The gpt2_124M_debug_state.bin has the following format:
+//
+// ** FILE FORMAT (little endian) **
+// header: 0-1024
+//   - magic 20240327, version 2, B=4, T=64
+// x: 1024-2048 (4 sequences/batch * 64 tokens / sequence * 4 bytes/token = 1204 bytes/batch)
+// other fields such as expected the predicated label for each x (y), the final logits, the loss and
+// the gradients.
+// ** END FILE FORMAT **
+//
+// Crucially, it does not dump out the intermediate activations for each of the 12 layers.
+// To get these intermediate activations, I instrumented test_gpt2.c to dump these out.
+// test_gpt2.c also checks if the final logits of the C implementation match with the python
+// reference GPT2 implementation. The intermediate activations are available for download in this
+// repo (reference_activations.bin), so they need not be re-generated. I also extracted 64 x
+// values (these are tokenids from the tinyshakespeare dataset that Karpathy uses) and included it
+// in this repo (tokens.bin) so that this entire repo is self-contained.
+//
+// ** tokens.bin FILE FORMAT (little endian) **
+//
+// Input token ids extracted from llm.c's gpt2_124M_debug_state.bin, so the
+// repo is self-contained for activation comparison.
+//
+// header: bytes 0-255
+//   [0..3]   magic          value = 20260927 (uint32)
+//   [4]      version        uint8, = 1
+//   [5..7]   padding        zero -- for aligned loads
+//   [8..11]  token count    uint32, = 64
+//   [12..255] padding       zero
+//
+// payload: bytes 256 onwards
+//   token count x int32 token ids
+//
+// Total size = 256 + (token count * 4) = 512 bytes.
+//
+// The 64 ids are llm.c's x tensor, shaped (B=4 (rows), T=64 (cols)) row-major.
+// Here we use only the first 64 tokens of the 1st minibatch (row = 0).
+//
+//
+// ** reference_activations.bin FILE FORMAT (little endian, fp32) **
+//
+// Reference activations from Karpathy's llm.c (test_gpt2.c), step-0 forward pass
+// over the 64 token ids in tokens.bin. Batch 0 only. llm.c's own logits, loss and
+// gradient checks against the PyTorch reference passed on the producing run.
+//
+// header: bytes 0-1023 (256 x int32)
+//   [0] magic       = 20260928
+//   [1] version     = 1
+//   [2] B           = 1
+//   [3] T           = 64
+//   [4] C           = 768
+//   [5] L           = 12
+//   [6] Vp          = 50304   (PADDED vocab -- logits are this wide, not 50257)
+//   [7] num_tensors = 15
+//   [8] logit_rows  = 1       (tensor 14 holds ONLY position T-1)
+//   [9..255] zero
+//
+// payload: bytes 1024 onwards. 15 tensors back to back, no per-tensor headers.
+// Tensors 0..13 are row-major fp32, shape (T, C): element (t,c) at t*C + c.
+// Tensor 14 is a single row of Vp floats -- the logits at position T-1 only.
+//
+//   idx  tensor                             shape       floats    byte offset
+//   ---  ---------------------------------- ----------  --------  -----------
+//     0  after token+position embeddings    (64, 768)     49,152        1,024
+//     1  after layer 0                      (64, 768)     49,152      197,632
+//     2  after layer 1                      (64, 768)     49,152      394,240
+//     3  after layer 2                      (64, 768)     49,152      590,848
+//     4  after layer 3                      (64, 768)     49,152      787,456
+//     5  after layer 4                      (64, 768)     49,152      984,064
+//     6  after layer 5                      (64, 768)     49,152    1,180,672
+//     7  after layer 6                      (64, 768)     49,152    1,377,280
+//     8  after layer 7                      (64, 768)     49,152    1,573,888
+//     9  after layer 8                      (64, 768)     49,152    1,770,496
+//    10  after layer 9                      (64, 768)     49,152    1,967,104
+//    11  after layer 10                     (64, 768)     49,152    2,163,712
+//    12  after layer 11                     (64, 768)     49,152    2,360,320
+//    13  after the final layernorm          (64, 768)     49,152    2,556,928
+//    14  logits at position 63 only         (1, 50304)    50,304    2,753,536
+//
+// Tensor 0 is llm.c's "encoded"; 1..12 are "residual3[l]", 13 is "lnf"; 14 is "logits".
+// Take a look at the model.acts structure in llm.c/train_gpt2.c - this is where the
+// activations above come from.
+// ** END FILE FORMAT **
+#include <iostream>
+#include <type_traits>
+
+#include "checkpoint.hpp"
+#include "decoder.hpp"
+#include "mappedfile.hpp"
+
+using decoder::Decoder;
+using namespace std;
+
+int main(void) {
+    constexpr auto CHECKPOINTFILE = "../gpt2_124M.bin";
+    constexpr auto TOKENIDFILE = "../tokens.bin";
+    constexpr auto REFERENCEFILE = "../reference_activations.bin";
+    // construct the checkpoint
+    Checkpoint ckpt(CHECKPOINTFILE);
+    cout << "Loaded checkpoint file\n";
+    cout << "Context length:         " << ckpt.maxT << "\n";
+    cout << "Vocabulary size:        " << ckpt.vocab << "\n";
+    cout << "Layers:                 " << ckpt.layers << "\n";
+    cout << "Attention heads:        " << ckpt.nh << "\n";
+    cout << "Embedding dimensions:   " << ckpt.embsz << "\n";
+    cout << "Padded vocabulary size: " << ckpt.vocab_padded << "\n";
+    // instantiate the decoder from the checkpoint
+    Decoder gpt2(ckpt);
+
+    // read tokens from file to pass into the decoder
+    MappedFile tf(TOKENIDFILE);
+    constexpr auto OFFSET_MAGIC = 0;
+    constexpr auto OFFSET_VERSION = 4;
+    constexpr auto OFFSET_TOKENCOUNT = 8;
+    constexpr auto OFFSET_TOKENIDS = 256;
+
+    constexpr auto MAGIC = 20260927;
+    constexpr auto VERSION = 1;
+
+    assert(tf.to_int32(tf.bytes().subspan(OFFSET_MAGIC, sizeof(int32_t))) == MAGIC);
+    assert(tf.to_int32(tf.bytes().subspan(OFFSET_VERSION, sizeof(int8_t))) == VERSION);
+
+    int tokencount = tf.to_int32(tf.bytes().subspan(OFFSET_TOKENCOUNT, sizeof(int32_t)));
+
+    // now open the reference file
+    MappedFile ref(REFERENCEFILE);
+    span<const int> tokenids = tf.span_at<const int>(OFFSET_TOKENIDS, tokencount);
+    Tensor y = gpt2.forward(tokenids);
+}
