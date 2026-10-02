@@ -72,6 +72,7 @@ class MappedFile {
     }
 
     std::int32_t to_int32(std::span<const std::byte> bytes);
+    std::size_t size() { return size_; }
 
    private:
     const std::byte* data_ = nullptr;

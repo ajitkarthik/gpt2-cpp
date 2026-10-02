@@ -36,15 +36,15 @@ Checkpoint::Checkpoint(const string file) : mp(MappedFile(file.c_str())) {
     constexpr auto VERSION = 3;
 
     // Read weights from file
-    MappedFile mp_ = MappedFile(file.c_str());
-    assert(mp_.to_int32(mp_.bytes().subspan(OFFSET_MAGIC, sizeof(int32_t))) == MAGIC);
-    assert(mp_.to_int32(mp_.bytes().subspan(OFFSET_VERSION, sizeof(int32_t))) == VERSION);
-    maxT = mp_.to_int32(mp_.bytes().subspan(OFFSET_MAXT, sizeof(int32_t)));
-    vocab = mp_.to_int32(mp_.bytes().subspan(OFFSET_V, sizeof(int32_t)));
-    layers = mp_.to_int32(mp_.bytes().subspan(OFFSET_L, sizeof(int32_t)));
-    nh = mp_.to_int32(mp_.bytes().subspan(OFFSET_NH, sizeof(int32_t)));
-    embsz = mp_.to_int32(mp_.bytes().subspan(OFFSET_C, sizeof(int32_t)));
-    vocab_padded = mp_.to_int32(mp_.bytes().subspan(OFFSET_VP, sizeof(int32_t)));
+    // MappedFile mp_ = MappedFile(file.c_str());
+    assert(mp.to_int32(mp.bytes().subspan(OFFSET_MAGIC, sizeof(int32_t))) == MAGIC);
+    assert(mp.to_int32(mp.bytes().subspan(OFFSET_VERSION, sizeof(int32_t))) == VERSION);
+    maxT = mp.to_int32(mp.bytes().subspan(OFFSET_MAXT, sizeof(int32_t)));
+    vocab = mp.to_int32(mp.bytes().subspan(OFFSET_V, sizeof(int32_t)));
+    layers = mp.to_int32(mp.bytes().subspan(OFFSET_L, sizeof(int32_t)));
+    nh = mp.to_int32(mp.bytes().subspan(OFFSET_NH, sizeof(int32_t)));
+    embsz = mp.to_int32(mp.bytes().subspan(OFFSET_C, sizeof(int32_t)));
+    vocab_padded = mp.to_int32(mp.bytes().subspan(OFFSET_VP, sizeof(int32_t)));
 
     /* fp32 weights ...
     |  # | tensor     | shape      |      count | byte offset |
@@ -103,9 +103,9 @@ Checkpoint::Checkpoint(const string file) : mp(MappedFile(file.c_str())) {
 
     // Some sanity asserts since weights are known in advance
     // Check if offset math above is correct
-    assert(offset_lnfb + (embsz * sizeof(float)) == mp_.bytes().size());
+    assert(offset_lnfb + (embsz * sizeof(float)) == mp.bytes().size());
     // Check that token embedding weights are 0 between vocab and vocab_padded
-    assert(std::all_of(mp_.bytes().begin() + offset_wte + vocab * embsz * sizeof(float),
-                       mp_.bytes().begin() + offset_wte + vocab_padded * embsz * sizeof(float),
+    assert(std::all_of(mp.bytes().begin() + offset_wte + vocab * embsz * sizeof(float),
+                       mp.bytes().begin() + offset_wte + vocab_padded * embsz * sizeof(float),
                        [](std::byte b) { return b == std::byte{0}; }));
 }

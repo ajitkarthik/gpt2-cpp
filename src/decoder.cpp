@@ -1,5 +1,7 @@
 #include "decoder.hpp"
 
+#include <functional>
+
 #include "mappedfile.hpp"
 #include "tensor.hpp"
 
@@ -20,15 +22,17 @@ inline void gelu_(Tensor& x) {
 }
 
 // input shape (T, C), output shape (T, C)
+// See https://arxiv.org/pdf/2002.04745 Figure 1b.
 Tensor Layer::forward(const Tensor& x) {
     Tensor out(x.rows(), x.cols());
+    Tensor h(x.rows(), x.cols());
+    Tensor h1(x.rows(), x.cols());
     out = ln1_.forward(x);
     out = attn_.forward(out);
-    out = out + x;  // add the residual stream
-    out = ln2_.forward(out);
-    out = ffn_.forward(out);
-    out = out + x;  // add the residual stream
-    return out;
+    h = out + x;  // add the residual stream
+    h1 = ln2_.forward(h);
+    h1 = ffn_.forward(h1);
+    return h + h1;  // add the residual stream
 }
 
 Tensor FFN::forward(const Tensor& x) const {
@@ -241,12 +245,21 @@ Tensor Decoder::embed(span<const int32_t> tokens) {
 // The decoder expects x to be already embedded and positionally encoded
 // The input into the decoder is of shape (T, C), and output are logits of shape (1, V)
 // the predicted token
-Tensor Decoder::forward(span<const int32_t> tokens) {
+Tensor Decoder::forward(
+    span<const int32_t> tokens,
+    const std::function<void(const int index, const Tensor&)>& checkActivations) {
+    int tensorindex = 0;
     Tensor x = embed(tokens);
     assert(x.cols() == embedsize_);  // shape of x (T, C)
     assert(x.rows() <= maxT_);       // make sure # of tokens <= max context window
+    if (checkActivations) {
+        checkActivations(tensorindex++, x);
+    }
     for (int i = 0; i < nlayers_; i++) {
         x = layers_[i].forward(x);
+        if (checkActivations) {
+            checkActivations(tensorindex++, x);
+        }
     }
     // Just grab the last position so we'll end up with (1, C)
     Tensor logits = Tensor(1, embedsize_);
@@ -256,8 +269,14 @@ Tensor Decoder::forward(span<const int32_t> tokens) {
 
     logits = finalLN_.forward(logits);  // Final layerNorm, shape (1, C)
     assert(logits.rows() == 1 && logits.cols() == embedsize_);
+    if (checkActivations) {
+        checkActivations(tensorindex++, logits);
+    }
     logits = vocabproj_.forward(logits);  // Vocabulary projection, shape (1, Vp)
     assert(logits.rows() == 1 && logits.cols() == vocab_padded_);
+    if (checkActivations) {
+        checkActivations(tensorindex++, logits);
+    }
     // Remove the padded entries
     Tensor final_logits(1, vocab_);
     for (int i = 0; i < vocab_; i++) {

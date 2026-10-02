@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -107,7 +108,8 @@ class Layer {
 class Decoder {
    public:
     Decoder(Checkpoint& ckpt);
-    Tensor forward(std::span<const int32_t> tokens);
+    Tensor forward(std::span<const int32_t> tokens,
+                   const std::function<void(const int index, const Tensor&)>& checkActivations);
     Tensor embed(std::span<const int32_t> tokens);
 
    private:

@@ -85,23 +85,67 @@
 // Take a look at the model.acts structure in llm.c/train_gpt2.c - this is where the
 // activations above come from.
 // ** END FILE FORMAT **
+#include <cassert>
+#include <iomanip>
 #include <iostream>
-#include <type_traits>
 
 #include "checkpoint.hpp"
 #include "decoder.hpp"
 #include "mappedfile.hpp"
+#include "reference.hpp"
 
 using decoder::Decoder;
 using namespace std;
 
+// see https://docs.pytorch.org/docs/2.14/generated/torch.allclose.html
+bool allClose(vector<float> a, span<const float> b, double rtol = 1e-05, double atol = 1e-08) {
+    if (a.size() != b.size()) return false;
+    return std::equal(a.begin(), a.end(), b.begin(), [rtol, atol](float val_a, float val_b) {
+        if (std::isnan(val_a) || std::isnan(val_b)) {
+            return false;
+        }
+        return std::abs(val_a - val_b) <= (atol + rtol * std::abs(val_b));
+    });
+}
+
+void checkActivations(const int index, const Tensor& t) {
+    static constexpr auto REFERENCEFILE = "../reference_activations.bin";
+    static Reference ref(REFERENCEFILE);
+    if (index == 0)
+        cout << "Checking encodings ... ";
+    else if (index >= 1 && index <= 12)
+        cout << "Checking activations for layer " << index << " ... ";
+    else if (index == 13)
+        cout << "Checking activations for final layernorm ... ";
+    else if (index == 14)
+        cout << "Checking activations for final vocab projection ... ";
+
+    if (!allClose(t.flatten(), ref.spanAtIndex(index), ref.spanAtIndex(index).size())) {
+        // Dump a few activations
+        cout << "Got:";
+        for (int i = 0; i < 10; i++) {
+            cout << std::fixed << std::setprecision(4) << std::setw(7) << t.flatten()[i] << " ";
+        }
+        cout << "\n";
+        cout << "Ref:";
+        for (int i = 0; i < 10; i++) {
+            cout << std::fixed << std::setprecision(4) << std::setw(7) << ref.spanAtIndex(index)[i]
+                 << " ";
+        }
+        cout << "\n";
+        cerr << "Failed to compare with reference. Layer failed at: " << index << "\n";
+        assert(0);
+    } else {
+        cout << "PASS\n";
+    }
+}
+
 int main(void) {
     constexpr auto CHECKPOINTFILE = "../gpt2_124M.bin";
     constexpr auto TOKENIDFILE = "../tokens.bin";
-    constexpr auto REFERENCEFILE = "../reference_activations.bin";
     // construct the checkpoint
     Checkpoint ckpt(CHECKPOINTFILE);
-    cout << "Loaded checkpoint file\n";
+    cout << "Loaded checkpoint file. Size: " << ckpt.mp.size() / (1024 * 1024) << "MB\n";
     cout << "Context length:         " << ckpt.maxT << "\n";
     cout << "Vocabulary size:        " << ckpt.vocab << "\n";
     cout << "Layers:                 " << ckpt.layers << "\n";
@@ -127,7 +171,6 @@ int main(void) {
     int tokencount = tf.to_int32(tf.bytes().subspan(OFFSET_TOKENCOUNT, sizeof(int32_t)));
 
     // now open the reference file
-    MappedFile ref(REFERENCEFILE);
     span<const int> tokenids = tf.span_at<const int>(OFFSET_TOKENIDS, tokencount);
-    Tensor y = gpt2.forward(tokenids);
+    Tensor y = gpt2.forward(tokenids, checkActivations);
 }
