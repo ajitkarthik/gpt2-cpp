@@ -18,11 +18,6 @@ using tn::Tensor;
 
 namespace decoder {
 
-// y = x@w_T + b
-// w (ouptut feature, input feature)
-// b (output feature) - b is broadcasted
-// x (batch dim, input feature)
-// y (batch dim, output feature)
 class Linear {
    public:
     Linear(MatrixView w, std::optional<std::span<const float>> b) : w_(w), b_(b) {}
@@ -34,9 +29,6 @@ class Linear {
     std::optional<std::span<const float>> b_;
 };
 
-// input matrix (A, B)
-// output matrix with values in dimension B normed.
-// See: https://docs.pytorch.org/docs/2.14/generated/torch.nn.LayerNorm.html
 class LayerNorm {
    public:
     LayerNorm() = default;
@@ -50,10 +42,6 @@ class LayerNorm {
     float eps_;
 };
 
-// Multi-head self-attention
-// input: Shape (T, C)
-// output: Shape (T, C)
-// T = tokens, C = embedding dimensions
 class MHSA {
    public:
     MHSA(std::span<const float> qkvw, std::span<const float> qkvb, std::span<const float> attprojw,
@@ -70,7 +58,6 @@ class MHSA {
     int nheads_;                       // number of attention heads
 };
 
-// Linear (input, hidden), GELU, Linear (hidden, output)
 class FFN {
    public:
     FFN(MatrixView w1, std::span<const float> b1, MatrixView wproj, std::span<const float> bproj)

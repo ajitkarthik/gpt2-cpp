@@ -112,13 +112,13 @@ void checkActivations(const int index, const Tensor& t) {
     static constexpr auto REFERENCEFILE = "../reference_activations.bin";
     static Reference ref(REFERENCEFILE);
     if (index == 0)
-        cout << "Checking encodings ... ";
+        cout << "Checking encodings ...";
     else if (index >= 1 && index <= 12)
-        cout << "Checking activations for layer " << index << " ... ";
+        cout << "Checking activations for layer " << index << " ...";
     else if (index == 13)
-        cout << "Checking activations for final layernorm ... ";
+        cout << "Checking activations for final layernorm ...";
     else if (index == 14)
-        cout << "Checking activations for final vocab projection ... ";
+        cout << "Checking activations for final vocab projection ...";
 
     if (!allClose(t.flatten(), ref.spanAtIndex(index), ref.spanAtIndex(index).size())) {
         // Dump a few activations
@@ -136,7 +136,7 @@ void checkActivations(const int index, const Tensor& t) {
         cerr << "Failed to compare with reference. Layer failed at: " << index << "\n";
         assert(0);
     } else {
-        cout << "PASS\n";
+        cout << " PASS\n";
     }
 }
 

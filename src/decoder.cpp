@@ -35,12 +35,18 @@ Tensor Layer::forward(const Tensor& x) {
     return h + h1;  // add the residual stream
 }
 
+// Linear (input, hidden), GELU, Linear (hidden, output)
 Tensor FFN::forward(const Tensor& x) const {
     Tensor h = l1_.forward(x);
     gelu_(h);
     return l2_.forward(h);
 }
 
+// y = x@w_T + b
+// w (ouptut feature, input feature)
+// b (output feature) - b is broadcasted
+// x (batch dim, input feature)
+// y (batch dim, output feature)
 Tensor Linear::forward(const Tensor& x) const {
     if (b_.has_value()) {
         assert(static_cast<int>((*b_).size()) == w_.rows);
@@ -62,6 +68,9 @@ Tensor Linear::forward(const Tensor& x) const {
     return y;
 }
 
+// input matrix (A, B)
+// output matrix with values in dimension B normed.
+// See: https://docs.pytorch.org/docs/2.14/generated/torch.nn.LayerNorm.html
 Tensor LayerNorm::forward(const Tensor& x) const {
     assert(x.cols() == static_cast<int>(w_.size()));
     assert(x.cols() == static_cast<int>(b_.size()));
@@ -84,6 +93,10 @@ Tensor LayerNorm::forward(const Tensor& x) const {
     return out;
 }
 
+// Multi-head self-attention
+// input: Shape (T, C)
+// output: Shape (T, C)
+// T = tokens, C = embedding dimensions
 Tensor MHSA::forward(const Tensor& x) const {
     int C = x.cols();  // For gpt-2 this is 768
     int T = x.rows();
@@ -242,14 +255,13 @@ Tensor Decoder::embed(span<const int32_t> tokens) {
     return x;
 }
 
-// The decoder expects x to be already embedded and positionally encoded
 // The input into the decoder is of shape (T, C), and output are logits of shape (1, V)
 // the predicted token
 Tensor Decoder::forward(
     span<const int32_t> tokens,
     const std::function<void(const int index, const Tensor&)>& checkActivations) {
     int tensorindex = 0;
-    Tensor x = embed(tokens);
+    Tensor x = embed(tokens);        // embedding + postitional encoding
     assert(x.cols() == embedsize_);  // shape of x (T, C)
     assert(x.rows() <= maxT_);       // make sure # of tokens <= max context window
     if (checkActivations) {
