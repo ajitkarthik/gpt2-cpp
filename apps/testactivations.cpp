@@ -98,7 +98,7 @@ using decoder::Decoder;
 using namespace std;
 
 // see https://docs.pytorch.org/docs/2.14/generated/torch.allclose.html
-bool allClose(vector<float> a, span<const float> b, double rtol = 1e-05, double atol = 1e-08) {
+bool allClose(vector<float> a, span<const float> b, double rtol = 1e-05, double atol = 1e-3) {
     if (a.size() != b.size()) return false;
     return std::equal(a.begin(), a.end(), b.begin(), [rtol, atol](float val_a, float val_b) {
         if (std::isnan(val_a) || std::isnan(val_b)) {
@@ -120,16 +120,15 @@ void checkActivations(const int index, const Tensor& t) {
     else if (index == 14)
         cout << "Checking activations for final vocab projection ...";
 
-    if (!allClose(t.flatten(), ref.spanAtIndex(index), ref.spanAtIndex(index).size())) {
+    if (!allClose(t.flatten(), ref.spanAtIndex(index))) {
         // Dump a few activations
-        cout << "Got:";
+        cout << "\nGot:";
         for (int i = 0; i < 10; i++) {
-            cout << std::fixed << std::setprecision(4) << std::setw(7) << t.flatten()[i] << " ";
+            cout << std::fixed << std::setprecision(7) << std::setw(10) << t.flatten()[i] << " ";
         }
-        cout << "\n";
-        cout << "Ref:";
+        cout << "\nRef:";
         for (int i = 0; i < 10; i++) {
-            cout << std::fixed << std::setprecision(4) << std::setw(7) << ref.spanAtIndex(index)[i]
+            cout << std::fixed << std::setprecision(7) << std::setw(10) << ref.spanAtIndex(index)[i]
                  << " ";
         }
         cout << "\n";
@@ -172,5 +171,8 @@ int main(void) {
 
     // now open the reference file
     span<const int> tokenids = tf.span_at<const int>(OFFSET_TOKENIDS, tokencount);
-    Tensor y = gpt2.forward(tokenids, checkActivations);
+    // since forward takes in a vector, we need to convert the span to a vector
+    std::vector<int> v;
+    v.assign(tokenids.begin(), tokenids.end());
+    Tensor y = gpt2.forward(v, checkActivations);
 }

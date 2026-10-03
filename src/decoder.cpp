@@ -62,6 +62,8 @@ Tensor Linear::forward(const Tensor& x) const {
             }
             if (b_.has_value()) {
                 y.set(i, j, val + (*b_)[j]);
+            } else {
+                y.set(i, j, val);
             }
         }
     }
@@ -202,8 +204,10 @@ Decoder::Decoder(Checkpoint& ckpt) {
     loadLNWeights(ckpt.mp.span_at<float>(ckpt.offset_lnfw, embedsize_),
                   ckpt.mp.span_at<float>(ckpt.offset_lnfb, embedsize_));
 
-    // Load vocabulary projection weights - these are the same as wte
-    loadVocabProjWeights(ckpt.mp.span_at<float>(ckpt.offset_wte, embedsize_));
+    // Load vocabulary projection weights
+    // GPT2 uses the same weights matrix for the final vocab projection as the token embedding
+    // matrix (wte)
+    loadVocabProjWeights(ckpt.mp.span_at<float>(ckpt.offset_wte, vocab_padded_ * embedsize_));
 
     // Initialize the token embedding matrix
     // wte (vocab_padded, embsz)
@@ -234,8 +238,6 @@ void Decoder::loadLNWeights(span<const float> lnfw, span<const float> lnfb) {
 }
 
 void Decoder::loadVocabProjWeights(span<const float> wte) {
-    // GPT2 uses the same weights matrix for the final vocab projection as the token embedding
-    // matrix
     vocabproj_ = Linear(MatrixView(wte.data(), vocab_padded_, embedsize_), nullopt);
 }
 
@@ -258,7 +260,7 @@ Tensor Decoder::embed(span<const int32_t> tokens) {
 // The input into the decoder is of shape (T, C), and output are logits of shape (1, V)
 // the predicted token
 Tensor Decoder::forward(
-    span<const int32_t> tokens,
+    vector<int32_t> tokens,
     const std::function<void(const int index, const Tensor&)>& checkActivations) {
     int tensorindex = 0;
     Tensor x = embed(tokens);        // embedding + postitional encoding
@@ -267,29 +269,36 @@ Tensor Decoder::forward(
     if (checkActivations) {
         checkActivations(tensorindex++, x);
     }
+
+    // Run through all the layers
     for (int i = 0; i < nlayers_; i++) {
         x = layers_[i].forward(x);
         if (checkActivations) {
             checkActivations(tensorindex++, x);
         }
     }
+
     // Just grab the last position so we'll end up with (1, C)
     Tensor logits = Tensor(1, embedsize_);
     for (int i = 0; i < embedsize_; i++) {
         logits.set(0, i, x.at(x.rows() - 1, i));
     }
 
-    logits = finalLN_.forward(logits);  // Final layerNorm, shape (1, C)
+    // Final layerNorm, shape (1, C)
+    logits = finalLN_.forward(logits);
     assert(logits.rows() == 1 && logits.cols() == embedsize_);
     if (checkActivations) {
         checkActivations(tensorindex++, logits);
     }
-    logits = vocabproj_.forward(logits);  // Vocabulary projection, shape (1, Vp)
+
+    // Vocabulary projection, shape (1, Vp)
+    logits = vocabproj_.forward(logits);
     assert(logits.rows() == 1 && logits.cols() == vocab_padded_);
     if (checkActivations) {
         checkActivations(tensorindex++, logits);
     }
-    // Remove the padded entries
+
+    // Remove the padded entries, shape (1, V) after this
     Tensor final_logits(1, vocab_);
     for (int i = 0; i < vocab_; i++) {
         final_logits.set(0, i, logits.at(0, i));
