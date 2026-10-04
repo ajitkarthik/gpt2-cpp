@@ -1,13 +1,17 @@
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <string>
+#include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "checkpoint.hpp"
 #include "decoder.hpp"
 #include "mappedfile.hpp"
 #include "tensor.hpp"
+#include "utils.hpp"
 
 using namespace std;
 using decoder::Decoder;
@@ -31,7 +35,7 @@ constexpr auto OFFSET_TOKENS = 256 * sizeof(int32_t);  // Start of [len][...toke
 constexpr auto MAGIC = 20240328;
 constexpr auto VERSION = 2;
 
-constexpr auto TOKENIZERFILE = "../gpt2_tokenizer.bin";
+// constexpr auto TOKENIZERFILE = "../gpt2_tokenizer.bin";
 
 string idToToken(int id, MappedFile& tk, size_t startofTokens) {
     size_t offset = startofTokens;
@@ -44,8 +48,35 @@ string idToToken(int id, MappedFile& tk, size_t startofTokens) {
                   static_cast<uint8_t>(tk.bytes()[offset]));
 }
 
-int main(void) {
-    MappedFile tk = MappedFile(TOKENIZERFILE);  // open the token file
+void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char** argv) {
+    // If fewer args than we are expecting, print out help
+    if (argc < 5) {
+        cout << "Usage: " << argv[0];
+        cout << " [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>" << "\n";
+        exit(0);
+    }
+    // If any arg is -h or --help, print out help
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "-h" || arg == "--help") {
+            cout << "Usage: " << argv[0];
+            cout << " [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>" << "\n";
+            exit(0);
+        }
+    }
+    args["weights_file"] = string(argv[1]);
+    args["tokenizer_file"] = string(argv[2]);
+    int num_tokens = 0;
+    if (convert_arg(string(argv[3]), num_tokens)) args["num_tokens"] = num_tokens;
+    args["prompt"] = string(argv[4]);
+}
+
+// Usage: generate [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>
+int main(int argc, char** argv) {
+    unordered_map<string, variant<int, string>> args;
+    parseArgs(args, argc, argv);
+
+    MappedFile tk = MappedFile(get<string>(args["tokenizer_file"]).c_str());  // open the token file
     assert(tk.to_int32(tk.bytes().subspan(OFFSET_MAGIC, sizeof(int32_t))) == MAGIC);
     assert(tk.to_int32(tk.bytes().subspan(OFFSET_VERSION, sizeof(int32_t))) == VERSION);
     int32_t vocab = tk.to_int32(tk.bytes().subspan(OFFSET_VOCAB, sizeof(int32_t)));
@@ -54,9 +85,8 @@ int main(void) {
     // "Once upon a time, there was a"
     vector<int32_t> tokens = {7454, 2402, 257, 640, 11, 612, 373, 257};
     vector<int32_t> output;
-    constexpr auto CHECKPOINTFILE = "../gpt2_124M.bin";
-    // construct the checkpoint
-    Checkpoint ckpt(CHECKPOINTFILE);
+
+    Checkpoint ckpt(get<string>(args["weights_file"]).c_str());
     cout << "Loaded checkpoint file. Size: " << ckpt.mp.size() / (1024 * 1024) << "MB\n";
     cout << "Context length:         " << ckpt.maxT << "\n";
     cout << "Vocabulary size:        " << ckpt.vocab << "\n";
@@ -69,14 +99,14 @@ int main(void) {
 
     // Autoregressive loop
     int32_t pred = tokens[0];
-    constexpr int TOKENLIMIT = 25;
     int tokens_generated = 0;
+    int numtokens = get<int>(args["num_tokens"]);
 
     while (true) {
         Tensor logits = gpt2.forward(tokens, nullptr);             // shape (T, C)
         pred = logits.argmax(0);                                   // simple greedy decoding for now
         cout << idToToken(pred, tk, OFFSET_TOKENS) << std::flush;  // Decode tokenid -> token
-        if ((pred != eot) && (tokens_generated++ < TOKENLIMIT)) {
+        if ((pred != eot) && (tokens_generated++ < numtokens)) {
             assert(pred < vocab);
             tokens.push_back(pred);
             // check number of elements in tokens
