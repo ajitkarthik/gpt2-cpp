@@ -35,8 +35,6 @@ constexpr auto OFFSET_TOKENS = 256 * sizeof(int32_t);  // Start of [len][...toke
 constexpr auto MAGIC = 20240328;
 constexpr auto VERSION = 2;
 
-// constexpr auto TOKENIZERFILE = "../gpt2_tokenizer.bin";
-
 string idToToken(int id, MappedFile& tk, size_t startofTokens) {
     size_t offset = startofTokens;
     for (int i = 0; i < id; i++) {
@@ -53,6 +51,8 @@ void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char
     if (argc < 5) {
         cout << "Usage: " << argv[0];
         cout << " [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>" << "\n";
+        cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
+        cout << "       This program cannot read the HuggingFace safetensors format.\n";
         exit(0);
     }
     // If any arg is -h or --help, print out help
@@ -61,6 +61,8 @@ void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char
         if (arg == "-h" || arg == "--help") {
             cout << "Usage: " << argv[0];
             cout << " [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>" << "\n";
+            cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
+            cout << "       This program cannot read the HuggingFace safetensors format.\n";
             exit(0);
         }
     }

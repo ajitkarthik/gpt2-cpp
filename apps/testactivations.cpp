@@ -88,6 +88,7 @@
 #include <cassert>
 #include <iomanip>
 #include <iostream>
+#include <variant>
 
 #include "checkpoint.hpp"
 #include "decoder.hpp"
@@ -139,11 +140,38 @@ void checkActivations(const int index, const Tensor& t) {
     }
 }
 
-int main(void) {
-    constexpr auto CHECKPOINTFILE = "../gpt2_124M.bin";
-    constexpr auto TOKENIDFILE = "../tokens.bin";
+void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char** argv) {
+    // If fewer args than we are expecting, print out help
+    if (argc < 3) {
+        cout << "Usage: " << argv[0];
+        cout << " [-h | --help] <weights_file> <sample_tokens_file>" << "\n";
+        cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
+        cout << "       This program cannot read the HuggingFace safetensors format.\n";
+        exit(0);
+    }
+    // If any arg is -h or --help, print out help
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "-h" || arg == "--help") {
+            cout << "Usage: " << argv[0];
+            cout << " [-h | --help] <weights_file> <sample_tokens_file>" << "\n";
+            cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
+            cout << "       This program cannot read the HuggingFace safetensors format.\n";
+            exit(0);
+        }
+    }
+    args["weights_file"] = string(argv[1]);
+    args["sample_tokens_file"] = string(argv[2]);
+}
+
+// Usage: testactivations [-h | --help] <weights_file> <sample_tokens_file>
+int main(int argc, char** argv) {
+    // constexpr auto CHECKPOINTFILE = "../gpt2_124M.bin";
+    // constexpr auto TOKENIDFILE = "../tokens.bin";
     // construct the checkpoint
-    Checkpoint ckpt(CHECKPOINTFILE);
+    unordered_map<string, variant<int, string>> args;
+    parseArgs(args, argc, argv);
+    Checkpoint ckpt(get<string>(args["weights_file"]).c_str());
     cout << "Loaded checkpoint file. Size: " << ckpt.mp.size() / (1024 * 1024) << "MB\n";
     cout << "Context length:         " << ckpt.maxT << "\n";
     cout << "Vocabulary size:        " << ckpt.vocab << "\n";
@@ -155,7 +183,7 @@ int main(void) {
     Decoder gpt2(ckpt);
 
     // read tokens from file to pass into the decoder
-    MappedFile tf(TOKENIDFILE);
+    MappedFile tf(get<string>(args["sample_tokens_file"]).c_str());
     constexpr auto OFFSET_MAGIC = 0;
     constexpr auto OFFSET_VERSION = 4;
     constexpr auto OFFSET_TOKENCOUNT = 8;
