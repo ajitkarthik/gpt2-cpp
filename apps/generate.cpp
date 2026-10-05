@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -46,37 +47,72 @@ string idToToken(int id, MappedFile& tk, size_t startofTokens) {
                   static_cast<uint8_t>(tk.bytes()[offset]));
 }
 
-void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char** argv) {
-    // If fewer args than we are expecting, print out help
-    if (argc < 5) {
-        cout << "Usage: " << argv[0];
-        cout << " [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>" << "\n";
-        cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
-        cout << "       This program cannot read the HuggingFace safetensors format.\n";
-        exit(0);
-    }
-    // If any arg is -h or --help, print out help
+void printHelp(char* programName) {
+    cout << "Usage: " << programName;
+    cout << " [-h | --help] [-t | --temperature] <weights_file> <tokenizer_file> <num_tokens> "
+            "<prompt>\n";
+    cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
+    cout << "       This program cannot read the HuggingFace safetensors format.\n";
+}
+
+void parseArgs(unordered_map<string, variant<int, string, float>>& args, int argc, char** argv) {
+    // meaningful defaults
+    args["temperature"] = 0.75f;
+
+    vector<string> positional;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
-            cout << "Usage: " << argv[0];
-            cout << " [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>" << "\n";
-            cout << "Notes: See karpathy/llm.c to get the GPT2_124M.bin weights file.\n";
-            cout << "       This program cannot read the HuggingFace safetensors format.\n";
+            printHelp(argv[0]);
             exit(0);
         }
+        if (arg == "-t" || arg == "--temperature") {
+            if (i + 1 >= argc) {
+                cerr << "error: " << arg << " requires a value\n";
+                printHelp(argv[0]);
+                exit(1);
+            }
+            float temperature = 0.75f;
+            if (!convert_arg(string(argv[++i]), temperature)) {
+                cerr << "error: could not parse temperature '" << argv[i] << "'\n";
+                exit(1);
+            }
+            if (temperature < 0.0f) temperature = 0.75f;
+            args["temperature"] = temperature;
+            continue;
+        }
+        if (!arg.empty() && arg[0] == '-') {
+            cerr << "error: unknown option '" << arg << "'\n";
+            printHelp(argv[0]);
+            exit(1);
+        }
+        positional.push_back(arg);
     }
-    args["weights_file"] = string(argv[1]);
-    args["tokenizer_file"] = string(argv[2]);
+
+    // Mandatory positional args
+    if (positional.size() != 4) {
+        printHelp(argv[0]);
+        exit(positional.empty() ? 0 : 1);
+    }
+    args["weights_file"] = positional[0];
+    args["tokenizer_file"] = positional[1];
     int num_tokens = 0;
-    if (convert_arg(string(argv[3]), num_tokens)) args["num_tokens"] = num_tokens;
-    args["prompt"] = string(argv[4]);
+    if (!convert_arg(positional[2], num_tokens) || num_tokens <= 0) {
+        cerr << "error: num_tokens must be a positive integer\n";
+        exit(1);
+    }
+    args["num_tokens"] = num_tokens;
+    args["prompt"] = positional[3];
 }
 
-// Usage: generate [-h | --help] <weights_file> <tokenizer_file> <num_tokens> <prompt>
 int main(int argc, char** argv) {
-    unordered_map<string, variant<int, string>> args;
+    // parse command line
+    unordered_map<string, variant<int, string, float>> args;
     parseArgs(args, argc, argv);
+    cout << "Weights file:          " << get<string>(args["weights_file"]) << "\n";
+    cout << "Tokenizer file:        " << get<string>(args["tokenizer_file"]) << "\n";
+    cout << "Tokens to generate:    " << get<int>(args["num_tokens"]) << "\n";
+    cout << "Temperature            " << get<float>(args["temperature"]) << "\n\n";
 
     MappedFile tk = MappedFile(get<string>(args["tokenizer_file"]).c_str());  // open the token file
     assert(tk.to_int32(tk.bytes().subspan(OFFSET_MAGIC, sizeof(int32_t))) == MAGIC);
@@ -103,19 +139,65 @@ int main(int argc, char** argv) {
     int32_t pred = tokens[0];
     int tokens_generated = 0;
     int numtokens = get<int>(args["num_tokens"]);
+    float temp = get<float>(args["temperature"]);
+    constexpr int TOPK = 40;
+    constexpr unsigned int SEED = 42;
+    std::mt19937 gen(SEED);  // random number generator
+    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
     while (true) {
-        Tensor logits = gpt2.forward(tokens, nullptr);             // shape (T, C)
-        pred = logits.argmax(0);                                   // simple greedy decoding for now
-        cout << idToToken(pred, tk, OFFSET_TOKENS) << std::flush;  // Decode tokenid -> token
+        Tensor logits = gpt2.forward(tokens, nullptr);  // shape (T, C)
+        if (temp == 0.0f) {
+            // greedy decoding
+            pred = logits.argmax(0);
+        } else {
+            pred = -1;
+            // divide all logits by temperature
+            logits = logits / get<float>(args["temperature"]);
+            // sampling algo:
+            // -----
+            // 1. sort the logits vector conceptually (i.e. store permuted indexes into the logits
+            // vector in vector idx - this permutation is in the decreasing order of the logits)
+            // example: if logits = [1.00, 3.40, 4.00] then idx = [2, 1, 0]
+            // 2. pick top k logits
+            // 3. softmax to get probabilities
+            // 4. pick a random number from uniform distribution [0, 1)
+            // 5. sum the probabilities starting from the beginning until it is >= the random numer
+            // picked
+            // 6. the corresponding idx is the pred value
+            // ----
+            // step 1
+            vector<size_t> idx;
+            idx = logits.argsort();
+            // step 2
+            Tensor topk(1, TOPK);
+            for (int i = 0; i < TOPK; i++) topk.set(0, i, logits.at(0, idx[i]));
+            // step 3
+            topk = topk.softmax();
+            // step 4
+            float random_value = dis(gen);
+            // step 5 and 6
+            float sum = 0.0f;
+            for (int i = 0; i < topk.cols(); i++) {
+                sum += topk.at(0, i);
+                if (sum >= random_value) {
+                    pred = idx[i];
+                    break;
+                }
+            }
+            // corner case guard: if we fell off the loop without sum >= random_value), then pick
+            // the last bucket
+            if (pred == -1) pred = idx[TOPK - 1];
+        }
+
         if ((pred != eot) && (tokens_generated++ < numtokens)) {
             assert(pred < vocab);
+            cout << idToToken(pred, tk, OFFSET_TOKENS) << std::flush;  // Decode tokenid -> token
             tokens.push_back(pred);
             // check number of elements in tokens
             // keep a sliding window of maxT tokens at maximum
             if (tokens.size() > static_cast<size_t>(ckpt.maxT)) {
-                tokens.erase(tokens.begin());      // remove front element
-                tokens.resize(tokens.size() - 1);  // shrink size
+                tokens.erase(tokens.begin());  // remove front element
             }
         } else {
             break;

@@ -2,8 +2,8 @@
 
 A GPT-2 (124M) inference engine written from scratch in C++23, with no
 dependencies beyond the standard library. No BLAS, no Eigen, no ONNX — the
-tensor library, the transformer blocks, and the weight loader are all hand
-written.
+tensor library, the transformer blocks, the weight loader, and the sampler are
+all hand written. It loads OpenAI's pretrained weights and generates text.
 
 The forward pass is validated layer by layer against Karpathy's
 [llm.c](https://github.com/karpathy/llm.c), which is in turn validated against
@@ -49,6 +49,16 @@ The index arithmetic is written by hand on purpose.
 
 Inference only — no autograd, no gradient buffers, no computation graph.
 
+### Sampling
+
+Greedy decoding is a special case of sampling at temperature 0, so the two share
+one path. Above zero: logits are divided by the temperature, `argsort` yields the
+ordering as a permutation (never physically reordering the 50,257 logits), the
+top k are softmaxed, and a token is drawn by inverse transform sampling — walk
+the cumulative probabilities until they exceed a uniform draw from [0, 1).
+
+The generator is seeded explicitly, so any run is reproducible.
+
 ### Layering
 
 ```
@@ -72,9 +82,14 @@ File I/O lives in the apps, never in the library.
 ## Layout
 
 ```
-include/        tensor.hpp  mappedfile.hpp  checkpoint.hpp  decoder.hpp  reference.hpp
+include/        tensor.hpp      MatrixView + Tensor, 2D with strides
+                mappedfile.hpp  mmap RAII wrapper
+                checkpoint.hpp  weight file layout
+                decoder.hpp     Linear, LayerNorm, MHSA, FFN, Layer, Decoder
+                reference.hpp   reference-activation file layout
+                utils.hpp       small helpers
 src/            implementations
-apps/           generate.cpp          text generation (in progress)
+apps/           generate.cpp          text generation
                 testactivations.cpp   layer-by-layer validation
 tests/          any tests/*.cpp becomes a ctest case
 write_tokenizer.py   regenerates gpt2_tokenizer.bin
@@ -119,6 +134,33 @@ encode has subtleties that belong in their own project. Token ids come in
 pre-tokenized; the tokenizer file is used only to turn generated ids back into
 text.
 
+## Generating text
+
+```
+Usage: generate [-h | --help] [-t | --temperature <float>] \
+                <weights_file> <tokenizer_file> <num_tokens> <prompt>
+```
+
+```bash
+cd build
+./generate -t 0.8 ../gpt2_124M.bin ../gpt2_tokenizer.bin 20 "Once upon a time"
+```
+
+Temperature defaults to 0.75; `-t 0` selects greedy decoding. Top-k is fixed at
+40. Optional flags may appear before or after the positional arguments.
+
+**The `<prompt>` argument is currently accepted but ignored.** Without a BPE
+encoder there is no way to turn text into token ids, so the prompt is hardcoded
+as a token id array in `generate.cpp`. Replace that array to change the prompt —
+`write_tokenizer.py`'s `tiktoken` dependency can print the ids for a given
+string.
+
+Expect repetition from greedy decoding. GPT-2 124M produces notably flat
+distributions — the top ten candidates often span barely 1.5 logits — so always
+taking the argmax funnels into loops. That flatness is the reason temperature
+and top-k exist, and it is why the layer-by-layer check below, not the prose
+quality, is what tells you the forward pass is right.
+
 ## Running the validation
 
 ```bash
@@ -143,9 +185,11 @@ the reference.
 - [x] LayerNorm, GeLU, Linear, causal multi-head self-attention, FFN
 - [x] Full 12-layer forward pass, validated against llm.c to 1e-5
 - [x] Tokenizer decode table
-- [ ] Autoregressive generation loop
-- [ ] Sampling: greedy, temperature, top-k
+- [x] Autoregressive generation loop with a sliding context window
+- [x] Sampling: greedy, temperature, top-k
+- [ ] BPE encoder, so prompts can be given as text
 - [ ] KV cache
+- [ ] Batched inference
 
 ## License
 

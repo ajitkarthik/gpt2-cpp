@@ -65,8 +65,6 @@ class Tensor {
     MatrixView toMatrixView() const;
     // Access to underlying raw storage
     float* raw() { return data_.data(); }
-    // Access to the data vector
-    std::vector<float> data() { return data_; }
     // set element [i, j]
     void set(int i, int j, float val);
     // return element [i, j]
@@ -89,6 +87,8 @@ class Tensor {
     Tensor clone() const;
     float sum() const;                          // returns the sum of all elements of a tensor
     Tensor add_bias(const Tensor& bias) const;  // this: (rows, cols), bias: (1, cols)
+    Tensor operator/(const float b) const;
+    std::vector<size_t> argsort() const;
 };
 
 Tensor matmul(const MatrixView& a, const MatrixView& b);

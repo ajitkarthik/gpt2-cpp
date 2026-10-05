@@ -3,16 +3,20 @@
 
 #include <assert.h>
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <numeric>
 #include <vector>
+
+using namespace std;
 
 namespace tn {
 
 Tensor::Tensor(int rows, int cols) : rows_(rows), cols_(cols), row_stride_(cols), col_stride_(1) {
-    data_ = std::vector<float>(rows * cols, 0.0f);
+    data_ = vector<float>(rows * cols, 0.0f);
 }
 
 MatrixView Tensor::toMatrixView() const {
@@ -100,16 +104,16 @@ Tensor Tensor::softmax() const {
     // value so that the exp does not blow up
     // TODO: exp is being called twice. Cache it.
     for (int row = 0; row < rows_; row++) {
-        float row_max = std::numeric_limits<float>::lowest();
+        float row_max = numeric_limits<float>::lowest();
         float row_sum = 0.0f;
         for (int col = 0; col < cols_; col++) {
             row_max = (at(row, col) > row_max ? at(row, col) : row_max);
         }
         for (int col = 0; col < cols_; col++) {
-            row_sum += std::exp(at(row, col) - row_max);
+            row_sum += exp(at(row, col) - row_max);
         }
         for (int col = 0; col < cols_; col++) {
-            output.set(row, col, std::exp(at(row, col) - row_max) / row_sum);
+            output.set(row, col, exp(at(row, col) - row_max) / row_sum);
         }
     }
     return output;
@@ -135,8 +139,28 @@ Tensor Tensor::transpose() const {
     return t;
 }
 
-std::vector<float> Tensor::flatten() const {
-    std::vector<float> output;
+Tensor Tensor::operator/(const float b) const {
+    Tensor out(rows_, cols_);
+    for (int i = 0; i < rows_; i++) {
+        for (int j = 0; j < cols_; j++) {
+            out.set(i, j, at(i, j) * 1.0f / b);
+        }
+    }
+    return out;
+}
+
+vector<size_t> Tensor::argsort() const {
+    std::vector<size_t> idx(data_.size());
+    // fill with 0, 1, ..., size() - 1
+    std::iota(idx.begin(), idx.end(), 0);
+    // sort by tensor.data[i]
+    std::ranges::sort(idx, greater<>(), [&](size_t i) { return data_[i]; });
+
+    return idx;
+}
+
+vector<float> Tensor::flatten() const {
+    vector<float> output;
     output.reserve(rows_ * cols_);
     if (row_stride_ == cols_ && col_stride_ == 1)
         output = data_;
@@ -150,13 +174,13 @@ std::vector<float> Tensor::flatten() const {
     return output;
 }
 
-std::ostream& operator<<(std::ostream& os, const Tensor& t) {
-    os << std::fixed << std::setprecision(5);
+ostream& operator<<(ostream& os, const Tensor& t) {
+    os << fixed << setprecision(5);
     for (int i = 0; i < t.rows(); ++i) {
         for (int j = 0; j < t.cols(); ++j) {
-            os << std::setw(10) << t.at(i, j);
+            os << setw(10) << t.at(i, j);
         }
-        os << std::endl;
+        os << endl;
     }
     return os;
 }

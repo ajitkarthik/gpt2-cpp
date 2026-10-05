@@ -140,6 +140,7 @@ void checkActivations(const int index, const Tensor& t) {
     }
 }
 
+// TODO: This function has bugs - see the parseArgs in generate.cpp for the correct implementation.
 void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char** argv) {
     // If fewer args than we are expecting, print out help
     if (argc < 3) {
