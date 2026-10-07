@@ -86,6 +86,7 @@
 // activations above come from.
 // ** END FILE FORMAT **
 #include <cassert>
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <variant>
@@ -97,6 +98,8 @@
 
 using decoder::Decoder;
 using namespace std;
+
+static chrono::time_point<chrono::steady_clock> start;
 
 // see https://docs.pytorch.org/docs/2.14/generated/torch.allclose.html
 bool allClose(vector<float> a, span<const float> b, double rtol = 1e-05, double atol = 1e-3) {
@@ -110,12 +113,13 @@ bool allClose(vector<float> a, span<const float> b, double rtol = 1e-05, double 
 }
 
 void checkActivations(const int index, const Tensor& t) {
+    auto end = chrono::steady_clock::now();
     static constexpr auto REFERENCEFILE = "../reference_activations.bin";
     static Reference ref(REFERENCEFILE);
     if (index == 0)
         cout << "Checking encodings ...";
     else if (index >= 1 && index <= 12)
-        cout << "Checking activations for layer " << index << " ...";
+        cout << "Checking activations for layer " << setw(2) << index << " ...";
     else if (index == 13)
         cout << "Checking activations for final layernorm ...";
     else if (index == 14)
@@ -136,7 +140,10 @@ void checkActivations(const int index, const Tensor& t) {
         cerr << "Failed to compare with reference. Layer failed at: " << index << "\n";
         assert(0);
     } else {
-        cout << " PASS\n";
+        cout << " PASS ";
+        auto duration = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+        cout << "Time taken: " << duration << "ms\n";
+        start = end;
     }
 }
 
@@ -180,6 +187,7 @@ int main(int argc, char** argv) {
     cout << "Attention heads:        " << ckpt.nh << "\n";
     cout << "Embedding dimensions:   " << ckpt.embsz << "\n";
     cout << "Padded vocabulary size: " << ckpt.vocab_padded << "\n";
+    cout << "----------------------------------------\n";
     // instantiate the decoder from the checkpoint
     Decoder gpt2(ckpt);
 
@@ -203,5 +211,6 @@ int main(int argc, char** argv) {
     // since forward takes in a vector, we need to convert the span to a vector
     std::vector<int> v;
     v.assign(tokenids.begin(), tokenids.end());
+    start = chrono::steady_clock::now();
     Tensor y = gpt2.forward(v, checkActivations);
 }
