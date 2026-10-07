@@ -104,11 +104,11 @@ static chrono::time_point<chrono::steady_clock> start;
 // see https://docs.pytorch.org/docs/2.14/generated/torch.allclose.html
 bool allClose(vector<float> a, span<const float> b, double rtol = 1e-05, double atol = 1e-3) {
     if (a.size() != b.size()) return false;
-    return std::equal(a.begin(), a.end(), b.begin(), [rtol, atol](float val_a, float val_b) {
-        if (std::isnan(val_a) || std::isnan(val_b)) {
+    return equal(a.begin(), a.end(), b.begin(), [rtol, atol](float val_a, float val_b) {
+        if (isnan(val_a) || isnan(val_b)) {
             return false;
         }
-        return std::abs(val_a - val_b) <= (atol + rtol * std::abs(val_b));
+        return abs(val_a - val_b) <= (atol + rtol * abs(val_b));
     });
 }
 
@@ -129,12 +129,11 @@ void checkActivations(const int index, const Tensor& t) {
         // Dump a few activations
         cout << "\nGot:";
         for (int i = 0; i < 10; i++) {
-            cout << std::fixed << std::setprecision(7) << std::setw(10) << t.flatten()[i] << " ";
+            cout << fixed << setprecision(7) << setw(10) << t.flatten()[i] << " ";
         }
         cout << "\nRef:";
         for (int i = 0; i < 10; i++) {
-            cout << std::fixed << std::setprecision(7) << std::setw(10) << ref.spanAtIndex(index)[i]
-                 << " ";
+            cout << fixed << setprecision(7) << setw(10) << ref.spanAtIndex(index)[i] << " ";
         }
         cout << "\n";
         cerr << "Failed to compare with reference. Layer failed at: " << index << "\n";
@@ -159,7 +158,7 @@ void parseArgs(unordered_map<string, variant<int, string>>& args, int argc, char
     }
     // If any arg is -h or --help, print out help
     for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
+        string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
             cout << "Usage: " << argv[0];
             cout << " [-h | --help] <weights_file> <sample_tokens_file>" << "\n";
@@ -209,7 +208,7 @@ int main(int argc, char** argv) {
     // now open the reference file
     span<const int> tokenids = tf.span_at<const int>(OFFSET_TOKENIDS, tokencount);
     // since forward takes in a vector, we need to convert the span to a vector
-    std::vector<int> v;
+    vector<int> v;
     v.assign(tokenids.begin(), tokenids.end());
     start = chrono::steady_clock::now();
     Tensor y = gpt2.forward(v, checkActivations);
